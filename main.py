@@ -58,13 +58,12 @@ def search_yandex_news(query):
 from urllib.parse import quote_plus
 
 def search_google_news(query):
-    encoded_query = quote_plus(query)
+    cleaned_query = query.strip().replace('\n', ' ').replace('\r', ' ')
+    encoded_query = quote_plus(cleaned_query)
     url = f"https://news.google.com/rss/search?q={encoded_query}"
-    feed = feedparser.parse(url)
-    results = []
-    for entry in feed.entries:
-        results.append((entry.title, entry.link))
-    return results
+    print(f"🌐 Поиск Google: '{query}' → {url}", flush=True)
+    return [(entry.title, entry.link) for entry in feedparser.parse(url).entries]
+
 
 # --- Основной парсинг
 found_rows = []
