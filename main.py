@@ -83,20 +83,23 @@ for keyword in KEYWORDS:
     google_results = search_google_news(keyword)
 
     combined = yandex_results + google_results
-    new_items = 0
+    found_count = len(combined)
 
-    for title, link in combined:
-        if link in sent_links:
-            continue
-        normalized_title = normalize_text(title)
-        normalized_kw = normalize_text(keyword)
-        if normalized_kw in normalized_title:
-            sheet.append_row([yesterday, keyword, title, link])
-            found_links.append(link)
-            sent_links.add(link)
-            new_items += 1
+# Логируем всё, что нашли
+for source, results in [('🟡 Яндекс', yandex_results), ('🔵 Google', google_results)]:
+    for title, link in results:
+        print(f"{source} ➤ {title}\n   ↪ {link}")
 
-    print(f"📌 {keyword} — новых: {new_items}, всего получено: {len(combined)}")
+# Морфологическая проверка (если включена)
+filtered_results = []
+for title, link in combined:
+    if is_relevant(title, keyword):
+        filtered_results.append((title, link))
+
+# Итог по ключу
+new_count = save_and_log(filtered_results, keyword)
+print(f"📌 {keyword} — новых: {new_count}, всего найдено: {found_count}\n")
+
 
 # 💾 Сохраняем отправленные ссылки
 with open("sent_posts.json", "w", encoding="utf-8") as f:
