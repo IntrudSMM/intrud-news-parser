@@ -6,66 +6,76 @@ from bs4 import BeautifulSoup
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import feedparser
-from urllib.parse import quote_plus, urlparse
+from urllib.parse import quote_plus
+from pymorphy2 import MorphAnalyzer
 
 print("✅ Скрипт main.py запущен", flush=True)
+
+# Инициализация морфоанализатора
+morph = MorphAnalyzer()
+
+def normalize(text):
+    words = text.lower().split()
+    return ' '.join([morph.parse(w)[0].normal_form for w in words])
 
 # Загрузка ключевых слов
 with open("keywords.txt", "r", encoding="utf-8") as f:
     KEYWORDS = [line.strip() for line in f if line.strip()]
 print(f"🔑 Загружено {len(KEYWORDS)} ключевых слов", flush=True)
 
-# Дата
+# Дата: вчера
 yesterday = (datetime.utcnow() + timedelta(hours=3) - timedelta(days=1)).strftime('%Y-%m-%d')
 
 # Авторизация в Google Sheets
-scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-creds_json = os.getenv("GOOGLE_CREDS_JSON")
-creds_dict = json.loads(creds_json)
-creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-client = gspread.authorize(creds)
-sheet = client.open_by_url("https://docs.google.com/spreadsheets/d/1ar4pf2_6zqmplMAFFuB2BsolhpHh00jFvn5kmigaVlE/edit")
-worksheet = sheet.sheet1
+try:
+    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+    creds_json = os.getenv("GOOGLE_CREDS_JSON")
+    creds_dict = json.loads(creds_json)
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+    client = gspread.authorize(creds)
+    sheet = client.open_by_url("https://docs.google.com/spreadsheets/d/1ar4pf2_6zqmplMAFFuB2BsolhpHh00jFvn5kmigaVlE/edit")
+    worksheet = sheet.sheet1
+    print("📗 Авторизация в Google Sheets успешна", flush=True)
+except Exception as e:
+    print(f"❌ Ошибка авторизации в Google Sheets: {e}", flush=True)
+    exit(1)
 
-# Получаем ссылки
-existing_links = {row[2] for row in worksheet.get_all_values() if len(row) > 2 and row[2]}
+existing_links = {
+    row[2] for row in worksheet.get_all_values() if len(row) > 2 and row[2]
+}
 
-# Поиск в Яндексе
+# --- Поиск в Яндексе
 def search_yandex_news(query):
-    results = []
-    url = f"https://yandex.ru/news/search?text={quote_plus(query)}&lr=213&from=day"  # 213 = Москва
+    print(f"🔎 Яндекс: {query}", flush=True)
+    url = f"https://yandex.ru/news/search?text={quote_plus(query)}&from=day"
     headers = {"User-Agent": "Mozilla/5.0"}
     resp = requests.get(url, headers=headers)
     soup = BeautifulSoup(resp.text, "html.parser")
+    results = []
     for item in soup.select("article"):
-        a_tag = item.find("a")
-        h2_tag = item.find("h2")
-        if a_tag and h2_tag:
-            link = a_tag.get("href")
-            title = h2_tag.get_text(strip=True)
+        title_tag = item.find("h2")
+        link_tag = item.find("a")
+        if title_tag and link_tag:
+            title = title_tag.get_text(strip=True)
+            link = link_tag.get("href")
             if link and link.startswith("/news"):
                 link = "https://yandex.ru" + link
             results.append((title, link))
     return results
 
-# Поиск в Google News
+# --- Поиск в Google News
 def search_google_news(query):
+    print(f"🔎 Google News: {query}", flush=True)
     encoded_query = quote_plus(f"{query} when:1d location:Russia")
     url = f"https://news.google.com/rss/search?q={encoded_query}&hl=ru&gl=RU&ceid=RU:ru"
-    return [(entry.title, entry.link) for entry in feedparser.parse(url).entries]
+    feed = feedparser.parse(url)
+    return [(entry.title, entry.link) for entry in feed.entries]
 
-# Проверка текста страницы
-def keyword_in_article(link, keyword):
-    try:
-        resp = requests.get(link, timeout=5)
-        if resp.status_code == 200:
-            text = BeautifulSoup(resp.text, "html.parser").get_text(" ", strip=True).lower()
-            return keyword.lower() in text
-    except:
-        pass
-    return False
+# --- Проверка совпадения по леммам
+def is_match(keyword, title):
+    return normalize(keyword) in normalize(title)
 
-# Парсинг
+# --- Основной цикл
 found_rows = []
 for keyword in KEYWORDS:
     yandex_results = search_yandex_news(keyword)
@@ -76,32 +86,42 @@ for keyword in KEYWORDS:
     for title, link in combined:
         if link in existing_links:
             continue
-        if not keyword_in_article(link, keyword):
+        if not is_match(keyword, title):
             continue
         found_rows.append([yesterday, title, link, "", keyword, "Да"])
         existing_links.add(link)
         new_items += 1
 
-    print(f"🔸 {keyword} — новых: {new_items}, всего найдено: {len(combined)}", flush=True)
+    print(f"📌 {keyword} — новых: {new_items}, всего получено: {len(combined)}", flush=True)
 
-# Запись
+# --- Запись результатов
 if found_rows:
-    worksheet.append_rows(found_rows)
-    print(f"✅ Добавлено {len(found_rows)} строк в таблицу", flush=True)
+    try:
+        worksheet.append_rows(found_rows)
+        print(f"✅ Добавлено {len(found_rows)} строк в Google Sheets", flush=True)
+    except Exception as e:
+        print(f"❌ Ошибка записи в Google Sheets: {e}", flush=True)
 else:
     worksheet.append_row([yesterday, "Нет новостей по ключевым словам", "", "", "", "Нет"])
-    print("📭 Новостей не найдено", flush=True)
+    print("📭 Новостей не найдено — добавлена строка-заглушка", flush=True)
 
-# Telegram
-def send_telegram(text):
-    token = os.getenv("TELEGRAM_BOT_TOKEN")
+# --- Telegram уведомление
+def send_telegram_message(text):
+    bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
     chat_id = os.getenv("TELEGRAM_CHAT_ID")
-    if token and chat_id:
-        url = f"https://api.telegram.org/bot{token}/sendMessage"
-        payload = {"chat_id": chat_id, "text": text}
-        try:
-            requests.post(url, json=payload, timeout=5)
-        except Exception as e:
-            print(f"❌ Telegram error: {e}", flush=True)
+    if not bot_token or not chat_id:
+        print("⚠️ Отсутствуют переменные Telegram", flush=True)
+        return
+    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+    payload = {"chat_id": chat_id, "text": text}
+    try:
+        resp = requests.post(url, json=payload)
+        print(f"📬 Telegram статус: {resp.status_code}, ответ: {resp.text}", flush=True)
+    except Exception as e:
+        print(f"❌ Ошибка Telegram: {e}", flush=True)
 
-send_telegram(f"📰 За {yesterday} добавлено {len(found_rows)} новостей." if found_rows else f"📭 За {yesterday} новостей не найдено.")
+# Отправка уведомления
+if found_rows:
+    send_telegram_message(f"📰 Добавлено {len(found_rows)} новостей за {yesterday}")
+else:
+    send_telegram_message(f"📭 За {yesterday} новостей по ключевым словам не найдено")
