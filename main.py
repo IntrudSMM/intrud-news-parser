@@ -11,13 +11,11 @@ import pymorphy2
 
 # 📅 Дата поиска: вчера
 yesterday = (datetime.datetime.now() - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
-
 print("✅ Скрипт main.py запущен")
 
 # 📁 Загрузка ключевых слов
 with open("keywords.txt", "r", encoding="utf-8") as f:
     KEYWORDS = [line.strip() for line in f if line.strip()]
-
 print(f"🔑 Загружено {len(KEYWORDS)} ключевых слов")
 
 # 📄 Авторизация Google Sheets
@@ -26,14 +24,17 @@ creds_json = json.loads(os.environ["GOOGLE_CREDS_JSON"])
 creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_json, scope)
 client = gspread.authorize(creds)
 sheet = client.open_by_url(os.environ["SHEET_URL"]).sheet1
-
 print("📗 Авторизация в Google Sheets успешна")
 
 # 🧠 Морфологический разбор
 morph = pymorphy2.MorphAnalyzer()
-
 def normalize_text(text):
     return " ".join([morph.parse(word)[0].normal_form for word in text.lower().split()])
+
+def is_relevant(title, keyword):
+    norm_title = normalize_text(title)
+    norm_keyword = normalize_text(keyword)
+    return norm_keyword in norm_title
 
 # 🔍 Поиск в Яндексе
 def search_yandex_news(query):
@@ -42,7 +43,6 @@ def search_yandex_news(query):
     resp = requests.get(url, headers=headers)
     soup = BeautifulSoup(resp.text, "html.parser")
     results = []
-
     for item in soup.select("article"):
         title_tag = item.find("h2")
         link_tag = item.find("a")
@@ -52,7 +52,6 @@ def search_yandex_news(query):
             if link and link.startswith("/news"):
                 link = "https://yandex.ru" + link
             results.append((title, link))
-
     return results
 
 # 🔍 Поиск в Google News
@@ -65,11 +64,21 @@ def search_google_news(query):
 
 # 📋 Чтение уже отправленных новостей
 sent_links = set()
-with open("sent_posts.json", "r", encoding="utf-8") as f:
-    try:
-        sent_links = set(json.load(f))
-    except json.JSONDecodeError:
-        pass
+if os.path.exists("sent_posts.json"):
+    with open("sent_posts.json", "r", encoding="utf-8") as f:
+        try:
+            sent_links = set(json.load(f))
+        except json.JSONDecodeError:
+            pass
+
+def save_and_log(results, keyword):
+    count = 0
+    for title, link in results:
+        if link not in sent_links:
+            sheet.append_row([yesterday, keyword, title, link])
+            sent_links.add(link)
+            count += 1
+    return count
 
 # 🚀 Основной цикл по ключевым словам
 found_links = []
@@ -85,27 +94,26 @@ for keyword in KEYWORDS:
     combined = yandex_results + google_results
     found_count = len(combined)
 
-# Логируем всё, что нашли
-for source, results in [('🟡 Яндекс', yandex_results), ('🔵 Google', google_results)]:
-    for title, link in results:
-        print(f"{source} ➤ {title}\n   ↪ {link}")
+    # 📈 Логируем все найденные статьи
+    for source, results in [("🟡 Яндекс", yandex_results), ("🔵 Google", google_results)]:
+        for title, link in results:
+            print(f"{source} ➤ {title}\n   ↪ {link}")
 
-# Морфологическая проверка (если включена)
-filtered_results = []
-for title, link in combined:
-    if is_relevant(title, keyword):
-        filtered_results.append((title, link))
+    # 🧰 Морфологическая фильтрация
+    filtered_results = []
+    for title, link in combined:
+        if is_relevant(title, keyword):
+            filtered_results.append((title, link))
 
-# Итог по ключу
-new_count = save_and_log(filtered_results, keyword)
-print(f"📌 {keyword} — новых: {new_count}, всего найдено: {found_count}\n")
+    # 📊 Сохраняем новые
+    new_count = save_and_log(filtered_results, keyword)
+    print(f"📌 {keyword} — новых: {new_count}, всего найдено: {found_count}\n")
 
-
-# 💾 Сохраняем отправленные ссылки
+# 📆 Сохраняем все ссылки
 with open("sent_posts.json", "w", encoding="utf-8") as f:
     json.dump(list(sent_links), f, ensure_ascii=False, indent=2)
 
-# 📨 Если ничего не найдено — добавляем строку-заглушку
+# 📨 Если ничего не найдено — пишем в таблицу
 if not found_links:
     sheet.append_row([yesterday, "Нет новостей", "", ""])
-    print("📭 Новостей не найдено — добавлена строка-заглушка")
+    print("👭 Новостей не найдено — добавлена строка-заглушка")
