@@ -7,11 +7,9 @@ from bs4 import BeautifulSoup
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
-# Ключевые слова (пример)
-KEYWORDS = [
-    "ИНТРУД", "Интруд", "трудовая миграция", "патент на работу",
-    "разрешение на работу", "высококвалифицированные специалисты"
-]
+# Загрузка ключевых слов из файла
+with open("keywords.txt", "r", encoding="utf-8") as f:
+    KEYWORDS = [line.strip() for line in f if line.strip()]
 
 # Время - ищем за вчера
 yesterday = (datetime.utcnow() + timedelta(hours=3) - timedelta(days=1)).strftime('%Y-%m-%d')
