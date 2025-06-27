@@ -23,7 +23,7 @@ scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/au
 creds_json = json.loads(os.environ["GOOGLE_CREDS_JSON"])
 creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_json, scope)
 client = gspread.authorize(creds)
-sheet = client.open_by_url(os.environ["SHEET_URL"]).sheet1
+sheet = client.open_by_key(os.environ["SPREADSHEET_ID"]).sheet1
 print("📗 Авторизация в Google Sheets успешна")
 
 # 🧠 Морфологический разбор
