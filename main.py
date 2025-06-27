@@ -6,15 +6,16 @@ from bs4 import BeautifulSoup
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import feedparser
+from urllib.parse import quote_plus
 
 print("✅ Скрипт main.py запущен", flush=True)
 
-# Загрузка ключевых слов из файла
+# Загрузка ключевых слов
 with open("keywords.txt", "r", encoding="utf-8") as f:
     KEYWORDS = [line.strip() for line in f if line.strip()]
 print(f"🔑 Загружено {len(KEYWORDS)} ключевых слов", flush=True)
 
-# Время - ищем за вчера
+# Время (за вчера, по МСК)
 yesterday = (datetime.utcnow() + timedelta(hours=3) - timedelta(days=1)).strftime('%Y-%m-%d')
 
 # Авторизация в Google Sheets
@@ -26,19 +27,20 @@ try:
     client = gspread.authorize(creds)
     sheet = client.open_by_url("https://docs.google.com/spreadsheets/d/1ar4pf2_6zqmplMAFFuB2BsolhpHh00jFvn5kmigaVlE/edit")
     worksheet = sheet.sheet1
-    print("📗 Авторизация в Google Sheets прошла успешно", flush=True)
+    print("📗 Авторизация в Google Sheets успешна", flush=True)
 except Exception as e:
     print(f"❌ Ошибка авторизации в Google Sheets: {e}", flush=True)
     exit(1)
 
-# Получаем уже существующие ссылки (3-я колонка)
+# Существующие ссылки
 existing_records = worksheet.get_all_values()
 existing_links = {row[2] for row in existing_records if len(row) > 2 and row[2]}
-print(f"🔍 Поиск новостей за {yesterday} по {len(KEYWORDS)} ключевым словам...", flush=True)
+print(f"🔍 Начинаем поиск новостей за {yesterday}", flush=True)
 
-# --- Поиск в Яндексе
+# --- Яндекс парсер
 def search_yandex_news(query):
-    url = f"https://yandex.ru/news/search?text={query}&from=day"
+    region_param = "&lr=213"  # Москва
+    url = f"https://yandex.ru/news/search?text={quote_plus(query)}{region_param}&from=day"
     headers = {"User-Agent": "Mozilla/5.0"}
     resp = requests.get(url, headers=headers)
     soup = BeautifulSoup(resp.text, "html.parser")
@@ -54,40 +56,36 @@ def search_yandex_news(query):
             results.append((title, link))
     return results
 
-# --- Поиск в Google News
-from urllib.parse import quote_plus
-
+# --- Google News парсер
 def search_google_news(query):
-    safe_query = quote_plus(query.strip())  # Удаляет скрытые пробелы и кодирует корректно
-    url = f"https://news.google.com/rss/search?q={safe_query}"
+    encoded_query = quote_plus(f"{query} when:1d location:RU")
+    url = f"https://news.google.com/rss/search?q={encoded_query}&hl=ru&gl=RU&ceid=RU:ru"
     feed = feedparser.parse(url)
     results = []
     for entry in feed.entries:
         results.append((entry.title, entry.link))
-    print(f"🌐 Поиск Google: '{query}' → {url}", flush=True)
     return results
-
-from urllib.parse import quote_plus
-
 
 # --- Основной парсинг
 found_rows = []
 for keyword in KEYWORDS:
-    yandex_results = search_yandex_news(keyword)
-    google_results = search_google_news(keyword)
+    try:
+        yandex_results = search_yandex_news(keyword)
+        google_results = search_google_news(keyword)
+        combined = yandex_results + google_results
+        new_items = 0
 
-    combined = yandex_results + google_results
-    new_items = 0
+        for title, link in combined:
+            if link not in existing_links:
+                found_rows.append([yesterday, title, link, "", keyword, "Да"])
+                existing_links.add(link)
+                new_items += 1
 
-    for title, link in combined:
-        if link not in existing_links:
-            found_rows.append([yesterday, title, link, "", keyword, "Да"])
-            existing_links.add(link)
-            new_items += 1
+        print(f"🔸 {keyword} — {new_items} новых из {len(combined)} всего", flush=True)
+    except Exception as e:
+        print(f"❌ Ошибка при парсинге для «{keyword}»: {e}", flush=True)
 
-    print(f"🔸 {keyword} — найдено {new_items} новых из {len(combined)} всего", flush=True)
-
-# --- Запись результатов
+# --- Запись в Google Sheets
 if found_rows:
     try:
         worksheet.append_rows(found_rows)
@@ -96,9 +94,9 @@ if found_rows:
         print(f"❌ Ошибка записи в Google Sheets: {e}", flush=True)
 else:
     worksheet.append_row([yesterday, "Нет новостей по ключевым словам", "", "", "", "Нет"])
-    print("⚠️ Новостей не найдено. Добавлена строка с пометкой.", flush=True)
+    print("📭 Новостей не найдено. Добавлена строка-заглушка", flush=True)
 
-# Telegram уведомление
+# --- Уведомление в Telegram
 def send_telegram_message(text):
     bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
     chat_id = os.getenv("TELEGRAM_CHAT_ID")
@@ -111,10 +109,9 @@ def send_telegram_message(text):
         resp = requests.post(url, json=payload)
         print(f"📬 Telegram статус: {resp.status_code}, ответ: {resp.text}", flush=True)
     except Exception as e:
-        print(f"❌ Ошибка отправки Telegram: {e}", flush=True)
+        print(f"❌ Ошибка отправки в Telegram: {e}", flush=True)
 
-# Отправка уведомления
 if found_rows:
-    send_telegram_message(f"📰 Добавлено {len(found_rows)} новостей за {yesterday}")
+    send_telegram_message(f"📰 Найдено и добавлено {len(found_rows)} новостей за {yesterday}")
 else:
     send_telegram_message(f"📭 За {yesterday} новостей по ключевым словам не найдено")
