@@ -58,11 +58,16 @@ def search_yandex_news(query):
 from urllib.parse import quote_plus
 
 def search_google_news(query):
-    cleaned_query = query.strip().replace('\n', ' ').replace('\r', ' ')
-    encoded_query = quote_plus(cleaned_query)
-    url = f"https://news.google.com/rss/search?q={encoded_query}"
+    safe_query = quote_plus(query.strip())  # Удаляет скрытые пробелы и кодирует корректно
+    url = f"https://news.google.com/rss/search?q={safe_query}"
+    feed = feedparser.parse(url)
+    results = []
+    for entry in feed.entries:
+        results.append((entry.title, entry.link))
     print(f"🌐 Поиск Google: '{query}' → {url}", flush=True)
-    return [(entry.title, entry.link) for entry in feedparser.parse(url).entries]
+    return results
+
+from urllib.parse import quote_plus
 
 
 # --- Основной парсинг
