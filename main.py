@@ -87,11 +87,7 @@ def search_google_news(query):
     feed = feedparser.parse(url)
     results = []
     for entry in feed.entries:
-        title = entry.title
-        parsed_url = urlparse(entry.link)
-        real_url = parse_qs(parsed_url.query).get("url", [entry.link])[0]
-        results.append((title, real_url))
-    return results
+    return [(entry.title, entry.link) for entry in feed.entries]
 
 # 📋 Чтение уже отправленных новостей
 sent_links = set()
