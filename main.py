@@ -31,8 +31,8 @@ sheet = client.open_by_key(os.environ["SPREADSHEET_ID"]).sheet1
 print("📗 Авторизация в Google Sheets успешна")
 
 bot = None
-chat_id = os.environ.get("TELEGRAM_CHAT_ID")
-token = os.environ.get("TELEGRAM_BOT_TOKEN")
+chat_id = os.environ.get("TG_CHAT_ID")
+token = os.environ.get("TG_TOKEN")
 
 if chat_id and token:
     bot = telegram.Bot(token=token)
