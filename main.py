@@ -8,6 +8,7 @@ from bs4 import BeautifulSoup
 from oauth2client.service_account import ServiceAccountCredentials
 from urllib.parse import quote_plus
 import pymorphy2
+import telegram
 
 # 📅 Дата поиска: вчера
 yesterday = (datetime.datetime.now() - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
@@ -25,6 +26,14 @@ creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_json, scope)
 client = gspread.authorize(creds)
 sheet = client.open_by_key(os.environ["SPREADSHEET_ID"]).sheet1
 print("📗 Авторизация в Google Sheets успешна")
+
+bot = None
+chat_id = os.environ.get("TELEGRAM_CHAT_ID")
+token = os.environ.get("TELEGRAM_BOT_TOKEN")
+
+if chat_id and token:
+    bot = telegram.Bot(token=token)
+
 
 # 🧠 Морфологический разбор
 morph = pymorphy2.MorphAnalyzer()
@@ -97,13 +106,13 @@ if os.path.exists("sent_posts.json"):
             pass
 
 def save_and_log(results, keyword):
-    count = 0
+    saved = []
     for title, link in results:
         if link not in sent_links:
             sheet.append_row([yesterday, keyword, title, link])
             sent_links.add(link)
-            count += 1
-    return count
+            saved.append((title, link, keyword))
+    return saved
 
 # 🚀 Основной цикл по ключевым словам
 found_links = []
@@ -131,8 +140,10 @@ for keyword in KEYWORDS:
             filtered_results.append((title, link))
 
     # 📊 Сохраняем новые
-    new_count = save_and_log(filtered_results, keyword)
-    print(f"📌 {keyword} — новых: {new_count}, всего найдено: {found_count}\n")
+    new_items = save_and_log(filtered_results, keyword)
+    found_links.extend(new_items)
+    print(f"📌 {keyword} — новых: {len(new_items)}, всего найдено: {found_count}\n")
+
 
 # 📆 Сохраняем все ссылки
 with open("sent_posts.json", "w", encoding="utf-8") as f:
@@ -142,3 +153,41 @@ with open("sent_posts.json", "w", encoding="utf-8") as f:
 if not found_links:
     sheet.append_row([yesterday, "Нет новостей", "", ""])
     print("👭 Новостей не найдено — добавлена строка-заглушка")
+
+import re
+def escape_markdown(text):
+    return re.sub(r'([_*\[\]()~`>#+\-=|{}.!])', r'\\\1', text)
+
+if bot:
+    if found_links:
+        max_length = 4096
+        header = f"🗞 Новости за {yesterday}:\n\n"
+        footer = f"\n📊 Всего новостей: {len(found_links)}"
+        message_blocks = []
+        current_block = header
+        i = 1
+
+        for title, link, keyword in found_links:
+            entry = f"{i}. 📰 *{escape_markdown(title)}*\n🔗 [Читать статью]({link})\n🏷 Ключ: `{escape_markdown(keyword)}`\n\n"
+            if len(current_block) + len(entry) + len(footer) > max_length:
+                message_blocks.append(current_block)
+                current_block = ""
+            current_block += entry
+            i += 1
+
+        if current_block:
+            message_blocks.append(current_block)
+
+        for j, block in enumerate(message_blocks):
+            final_text = block
+            if j == len(message_blocks) - 1:
+                final_text += footer
+            try:
+                bot.send_message(chat_id=chat_id, text=final_text, parse_mode=telegram.ParseMode.MARKDOWN)
+            except Exception as e:
+                print(f"❌ Ошибка при отправке сообщения {j+1}: {e}")
+    else:
+        bot.send_message(chat_id=chat_id, text=f"📭 За {yesterday} новостей не найдено.")
+else:
+    print("⚠️ Telegram переменные окружения не заданы")
+
