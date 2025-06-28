@@ -43,16 +43,41 @@ def search_yandex_news(query):
     resp = requests.get(url, headers=headers)
     soup = BeautifulSoup(resp.text, "html.parser")
     results = []
-    for item in soup.select("article"):
-        title_tag = item.find("h2")
-        link_tag = item.find("a")
+
+    for article in soup.select("article"):
+        title_tag = article.find("h2")
+        link_tag = article.find("a")
+
         if title_tag and link_tag:
             title = title_tag.get_text(strip=True)
-            link = link_tag.get("href")
-            if link and link.startswith("/news"):
-                link = "https://yandex.ru" + link
-            results.append((title, link))
+            yandex_link = link_tag.get("href")
+
+            # Преобразуем внутреннюю ссылку в внешнюю
+            if yandex_link and yandex_link.startswith("/news"):
+                full_yandex_url = "https://yandex.ru" + yandex_link
+                try:
+                    preview = requests.get(full_yandex_url, headers=headers, timeout=5)
+                    preview_soup = BeautifulSoup(preview.text, "html.parser")
+                    real_link = None
+
+                    for tag in preview_soup.find_all("a", href=True):
+                        if "yandex.ru" not in tag["href"] and tag["href"].startswith("http"):
+                            real_link = tag["href"]
+                            break
+
+                    if real_link:
+                        results.append((title, real_link))
+                    else:
+                        results.append((title, full_yandex_url))  # fallback
+
+                except Exception as e:
+                    print(f"⚠️ Ошибка при получении внешней ссылки Яндекса: {e}")
+                    results.append((title, full_yandex_url))
+            else:
+                results.append((title, yandex_link))
+
     return results
+
 
 # 🔍 Поиск в Google News
 def search_google_news(query):
@@ -60,7 +85,13 @@ def search_google_news(query):
     encoded_query = quote_plus(cleaned_query)
     url = f"https://news.google.com/rss/search?q={encoded_query}+when:{yesterday}&hl=ru&gl=RU&ceid=RU:ru"
     feed = feedparser.parse(url)
-    return [(entry.title, entry.link) for entry in feed.entries]
+    results = []
+    for entry in feed.entries:
+        title = entry.title
+        parsed_url = urlparse(entry.link)
+        real_url = parse_qs(parsed_url.query).get("url", [entry.link])[0]
+        results.append((title, real_url))
+    return results
 
 # 📋 Чтение уже отправленных новостей
 sent_links = set()
