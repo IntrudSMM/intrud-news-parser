@@ -1,7 +1,7 @@
 import os
 import json
 from dotenv import load_dotenv
-load_dotenv()
+load_dotenv(dotenv_path=".env")
 
 import datetime
 import requests
@@ -160,6 +160,9 @@ if not found_links:
 import re
 def escape_markdown(text):
     return re.sub(r'([_*\[\]()~`>#+\-=|{}.!])', r'\\\1', text)
+
+print(f"🔍 TOKEN: {token}")
+print(f"🔍 CHAT_ID: {chat_id}")
 
 if bot:
     if found_links:
