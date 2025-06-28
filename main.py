@@ -85,8 +85,6 @@ def search_google_news(query):
     encoded_query = quote_plus(cleaned_query)
     url = f"https://news.google.com/rss/search?q={encoded_query}+when:{yesterday}&hl=ru&gl=RU&ceid=RU:ru"
     feed = feedparser.parse(url)
-    results = []
-    for entry in feed.entries:
     return [(entry.title, entry.link) for entry in feed.entries]
 
 # 📋 Чтение уже отправленных новостей
