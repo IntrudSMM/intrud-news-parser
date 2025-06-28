@@ -4,3 +4,4 @@ gspread
 oauth2client
 requests
 pymorphy2
+python-telegram-bot==13.15
